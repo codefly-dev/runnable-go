@@ -2,7 +2,11 @@
 
 The Codefly language agent for typed, finite Go operations: generate a handler and harness, compile portable native artifacts, and emit container build recipes.
 
-**Status: repository initialized; implementation is deferred until the Python/native/k3d contract is qualified.** No agent executable or release is available yet. [Implementation issue #1](https://github.com/codefly-dev/runnable-go/issues/1) tracks this work.
+**Status: the contract-determined generation slice is implemented; the agent process, harness and qualification are deferred until the Python/native/k3d contract is qualified.** No agent executable or release is available yet. [Implementation issue #1](https://github.com/codefly-dev/runnable-go/issues/1) tracks this work.
+
+`pkg/generate` turns a runnable's declared contract into the typed Go bindings and the author handler scaffold. The bounded profile maps to `string`, `int64`, `bool`, generated structs and slices, and the contract's independent `optional` (the key may be absent) and `nullable` (the value may be null) declarations map to three distinct Go spellings so neither state can stand for the other.
+
+The agent gRPC process, the invocation harness, build evidence and native/k3d qualification wait on [core #472](https://github.com/codefly-dev/core/issues/472), which freezes the agent/CLI handoff `runnable.codefly.yaml` names but does not define: carrying a `RunnableIdentity` through `Builder.Load`, returning native launch and build evidence from `Builder.Package`, and the `codefly.runnable/v1` framing a harness must agree with byte for byte.
 
 ## What belongs here
 
