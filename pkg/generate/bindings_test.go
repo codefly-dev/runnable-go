@@ -75,25 +75,55 @@ func TestOptionalAndNullableAreIndependent(t *testing.T) {
 	)
 
 	requireLine(t, source, "Required string `json:\"required\"`")
-	requireLine(t, source, "AbsentOrSet *string `json:\"absent_or_set,omitzero\"`")
+	requireLine(t, source, "AbsentOrSet Present[string] `json:\"absent_or_set,omitzero\"`")
 	requireLine(t, source, "NullOrSet *string `json:\"null_or_set\"`")
 	requireLine(t, source, "AbsentOrNullOrSet Optional[string] `json:\"absent_or_null_or_set,omitzero\"`")
 	if !strings.Contains(source, "type Optional[T any] struct") {
 		t.Fatalf("Optional is used but not declared:\n%s", source)
 	}
+	if !strings.Contains(source, "type Present[T any] struct") {
+		t.Fatalf("Present is used but not declared:\n%s", source)
+	}
 }
 
-// Optional is only declared when the contract needs it.
-func TestOptionalIsNotDeclaredWhenUnused(t *testing.T) {
+// An optional, non-nullable field is a Present and never a pointer:
+// encoding/json sets a pointer field to nil for an explicit null without
+// consulting an unmarshaler, which would admit a null the declaration forbids
+// and leave it indistinguishable from the key being absent.
+func TestOptionalAndNotNullableIsNeverAPointer(t *testing.T) {
+	source := generated(t,
+		[]*resources.RunnableField{
+			{Name: "label", Type: resources.RunnableFieldString, Optional: true},
+			{Name: "count", Type: resources.RunnableFieldInteger, Optional: true},
+			{Name: "enabled", Type: resources.RunnableFieldBoolean, Optional: true},
+			{Name: "options", Type: resources.RunnableFieldObject, Optional: true, Fields: []*resources.RunnableField{
+				field("limit", resources.RunnableFieldInteger),
+			}},
+			{Name: "tags", Type: resources.RunnableFieldArray, Optional: true, Items: field("", resources.RunnableFieldString)},
+		},
+		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
+	)
+
+	requireLine(t, source, "Label Present[string] `json:\"label,omitzero\"`")
+	requireLine(t, source, "Count Present[int64] `json:\"count,omitzero\"`")
+	requireLine(t, source, "Enabled Present[bool] `json:\"enabled,omitzero\"`")
+	requireLine(t, source, "Options Present[InputOptions] `json:\"options,omitzero\"`")
+	requireLine(t, source, "Tags Present[[]string] `json:\"tags,omitzero\"`")
+}
+
+// A carrier is only declared when the contract needs it.
+func TestCarriersAreNotDeclaredWhenUnused(t *testing.T) {
 	source := generated(t,
 		[]*resources.RunnableField{{Name: "note", Type: resources.RunnableFieldString, Nullable: true}},
 		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
 	)
-	if strings.Contains(source, "Optional") {
-		t.Fatalf("Optional declared for a contract that has no optional-and-nullable field:\n%s", source)
+	for _, carrier := range []string{"Optional", "Present"} {
+		if strings.Contains(source, carrier) {
+			t.Fatalf("%s declared for a contract that has no optional field:\n%s", carrier, source)
+		}
 	}
 	if strings.Contains(source, "encoding/json") {
-		t.Fatalf("bindings import encoding/json without Optional:\n%s", source)
+		t.Fatalf("bindings import encoding/json without a carrier:\n%s", source)
 	}
 }
 
@@ -116,7 +146,7 @@ func TestNestedObjectsAreNamedByPath(t *testing.T) {
 		},
 	)
 
-	requireLine(t, source, "Options *InputOptions `json:\"options,omitzero\"`")
+	requireLine(t, source, "Options Present[InputOptions] `json:\"options,omitzero\"`")
 	requireLine(t, source, "StopWords *[]string `json:\"stop_words\"`")
 	requireLine(t, source, "Records []InputRecordsItem `json:\"records\"`")
 	requireLine(t, source, "type InputRecordsItem struct {")

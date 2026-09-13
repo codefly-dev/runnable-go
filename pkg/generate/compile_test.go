@@ -84,10 +84,10 @@ func TestAbsentNullAndSetAreThreeStates(t *testing.T) {
 	if absent.Flag.Present {
 		t.Error("an absent optional-and-nullable key decoded as present")
 	}
-	if absent.Count != nil {
+	if _, ok := absent.Count.Get(); ok {
 		t.Error("an absent optional key decoded as set")
 	}
-	if absent.Options != nil {
+	if _, ok := absent.Options.Get(); ok {
 		t.Error("an absent optional object decoded as set")
 	}
 	if absent.Note != nil {
@@ -103,13 +103,13 @@ func TestAbsentNullAndSetAreThreeStates(t *testing.T) {
 	if !set.Flag.Present || set.Flag.Value == nil || !*set.Flag.Value {
 		t.Errorf("a set optional-and-nullable key decoded as %+v", set.Flag)
 	}
-	if set.Count == nil || *set.Count != 7 {
-		t.Errorf("count decoded as %v", set.Count)
+	if count, ok := set.Count.Get(); !ok || count != 7 {
+		t.Errorf("count decoded as %+v", set.Count)
 	}
 	if set.Note == nil || *set.Note != "n" {
 		t.Errorf("note decoded as %v", set.Note)
 	}
-	if set.Options == nil || set.Options.Limit != 3 {
+	if options, ok := set.Options.Get(); !ok || options.Limit != 3 {
 		t.Errorf("options decoded as %+v", set.Options)
 	}
 }
@@ -137,6 +137,30 @@ func TestEncodingOmitsAbsentKeysAndWritesNull(t *testing.T) {
 	null := encoded(t, Input{Text: "a", Scores: []int64{}, Flag: Optional[bool]{Present: true}})
 	if !strings.Contains(null, ` + "`" + `"flag":null` + "`" + `) {
 		t.Errorf("a present-and-null key was not encoded as null: %s", null)
+	}
+
+	set := encoded(t, Input{Text: "a", Scores: []int64{}, Count: Value(int64(7))})
+	if !strings.Contains(set, ` + "`" + `"count":7` + "`" + `) {
+		t.Errorf("a set optional key was not encoded: %s", set)
+	}
+}
+
+// A field the contract declares optional and not nullable has no null state, so
+// a null is refused rather than decoded as the absent key it is not.
+func TestNullIsRefusedForAnOptionalFieldThatIsNotNullable(t *testing.T) {
+	for _, payload := range []string{
+		` + "`" + `{"text":"a","note":null,"scores":[],"count":null}` + "`" + `,
+		` + "`" + `{"text":"a","note":null,"scores":[],"options":null}` + "`" + `,
+	} {
+		var in Input
+		if err := json.Unmarshal([]byte(payload), &in); err == nil {
+			t.Errorf("%s decoded without error", payload)
+		}
+	}
+
+	var in Input
+	if err := json.Unmarshal([]byte(` + "`" + `{"text":"a","note":null,"flag":null,"scores":[]}` + "`" + `), &in); err != nil {
+		t.Errorf("a null for a key the contract declares nullable was refused: %v", err)
 	}
 }
 
