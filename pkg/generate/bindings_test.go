@@ -1,6 +1,8 @@
 package generate_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -57,7 +59,7 @@ func TestValueTypesMapToTheBoundedProfile(t *testing.T) {
 	requireLine(t, source, "Text string `json:\"text\"`")
 	requireLine(t, source, "Count int64 `json:\"count\"`")
 	requireLine(t, source, "Enabled bool `json:\"enabled\"`")
-	requireLine(t, source, "Tags []string `json:\"tags\"`")
+	requireLine(t, source, "Tags List[string] `json:\"tags\"`")
 	requireLine(t, source, "Total int64 `json:\"total\"`")
 }
 
@@ -108,7 +110,7 @@ func TestOptionalAndNotNullableIsNeverAPointer(t *testing.T) {
 	requireLine(t, source, "Count Present[int64] `json:\"count,omitzero\"`")
 	requireLine(t, source, "Enabled Present[bool] `json:\"enabled,omitzero\"`")
 	requireLine(t, source, "Options Present[InputOptions] `json:\"options,omitzero\"`")
-	requireLine(t, source, "Tags Present[[]string] `json:\"tags,omitzero\"`")
+	requireLine(t, source, "Tags Present[List[string]] `json:\"tags,omitzero\"`")
 }
 
 // A carrier is only declared when the contract needs it.
@@ -147,8 +149,8 @@ func TestNestedObjectsAreNamedByPath(t *testing.T) {
 	)
 
 	requireLine(t, source, "Options Present[InputOptions] `json:\"options,omitzero\"`")
-	requireLine(t, source, "StopWords *[]string `json:\"stop_words\"`")
-	requireLine(t, source, "Records []InputRecordsItem `json:\"records\"`")
+	requireLine(t, source, "StopWords *List[string] `json:\"stop_words\"`")
+	requireLine(t, source, "Records List[InputRecordsItem] `json:\"records\"`")
 	requireLine(t, source, "type InputRecordsItem struct {")
 	requireLine(t, source, "type OutputOptions struct {")
 }
@@ -161,7 +163,7 @@ func TestNullableArrayElements(t *testing.T) {
 		},
 		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
 	)
-	requireLine(t, source, "Scores []*int64 `json:\"scores\"`")
+	requireLine(t, source, "Scores List[*int64] `json:\"scores\"`")
 }
 
 // A field description reaches the author on the generated field.
@@ -246,5 +248,225 @@ func TestHandlerScaffold(t *testing.T) {
 	}
 	if strings.Contains(text, "DO NOT EDIT") {
 		t.Fatalf("author-owned scaffold is marked generated:\n%s", text)
+	}
+}
+
+// A contract field name that is legal to core but generates no exported Go
+// identifier is named in the error, rather than reaching gofmt as a parse
+// error pointing at a file the author never sees.
+func TestFieldNameWithoutExportedIdentifierIsRejected(t *testing.T) {
+	for _, name := range []string{"_1", "_1x"} {
+		t.Run(name, func(t *testing.T) {
+			contract := contractOf(
+				[]*resources.RunnableField{field(name, resources.RunnableFieldString)},
+				[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
+			)
+			if err := contract.Validate(); err != nil {
+				t.Fatalf("core rejects %q, so this is no longer the case under test: %v", name, err)
+			}
+			_, err := generate.Bindings("wordcount", contract)
+			if err == nil {
+				t.Fatal("field name with no exported Go identifier generated without error")
+			}
+			if !strings.Contains(err.Error(), name) {
+				t.Fatalf("error does not name the offending contract field: %v", err)
+			}
+			if strings.Contains(err.Error(), "expected") {
+				t.Fatalf("error is a gofmt parse error rather than a diagnosis: %v", err)
+			}
+		})
+	}
+}
+
+// Two contract paths that generate one Go type name are reported as the two
+// paths an author can act on. The generated name is not a name they wrote.
+func TestCollidingTypeNamesNameBothContractPaths(t *testing.T) {
+	contract := contractOf(
+		[]*resources.RunnableField{
+			{Name: "a_b", Type: resources.RunnableFieldObject, Fields: []*resources.RunnableField{field("x", resources.RunnableFieldString)}},
+			{Name: "a", Type: resources.RunnableFieldObject, Fields: []*resources.RunnableField{
+				{Name: "b", Type: resources.RunnableFieldObject, Fields: []*resources.RunnableField{field("y", resources.RunnableFieldString)}},
+			}},
+		},
+		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
+	)
+	if err := contract.Validate(); err != nil {
+		t.Fatalf("core rejects the contract, so this is no longer the case under test: %v", err)
+	}
+	_, err := generate.Bindings("wordcount", contract)
+	if err == nil {
+		t.Fatal("colliding Go type names generated without error")
+	}
+	for _, path := range []string{"input.a_b", "input.a.b"} {
+		if !strings.Contains(err.Error(), path) {
+			t.Fatalf("error does not name contract path %s: %v", path, err)
+		}
+	}
+}
+
+// A runnable name is a path component, so it may carry characters no Go
+// package name may. Rendering one unvalidated puts it in the file as source.
+func TestPackageNameMustBeAGoIdentifier(t *testing.T) {
+	contract := contractOf(
+		[]*resources.RunnableField{field("text", resources.RunnableFieldString)},
+		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
+	)
+	for _, pkg := range []string{"word-count", "", "go", "_", "1count", "wordcount\n\nfunc init() {}"} {
+		t.Run(pkg, func(t *testing.T) {
+			if _, err := generate.Bindings(pkg, contract); err == nil {
+				t.Fatalf("package name %q rendered without error", pkg)
+			} else if !strings.Contains(err.Error(), "package name") {
+				t.Fatalf("error does not diagnose the package name: %v", err)
+			}
+			if _, err := generate.Handler(pkg, "word-count"); err == nil {
+				t.Fatalf("Handler rendered package name %q without error", pkg)
+			}
+		})
+	}
+}
+
+// The runnable name is rendered into a comment, so a line terminator in it
+// would end the comment and leave the rest of the name in the file as source.
+func TestRunnableNameMustStayInsideItsComment(t *testing.T) {
+	for _, name := range []string{"", "word\ncount", "word\rcount", "word\x00count"} {
+		if _, err := generate.Handler("wordcount", name); err == nil {
+			t.Fatalf("runnable name %q rendered without error", name)
+		}
+	}
+}
+
+// Generated bindings only encode an absent key correctly under a toolchain
+// that honours omitzero, so they say so in the file rather than leaving it to
+// whatever compiles the author's workspace.
+func TestGeneratedFileCarriesTheToolchainConstraint(t *testing.T) {
+	source := generated(t,
+		[]*resources.RunnableField{{Name: "count", Type: resources.RunnableFieldInteger, Optional: true}},
+		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
+	)
+	want := "//go:build " + generate.GoRequirement
+	if !strings.HasPrefix(source, want+"\n") {
+		t.Fatalf("generated file does not open with %q:\n%s", want, source)
+	}
+}
+
+// The Optional states are reachable only through the constructors: no field of
+// it is exported, so no literal can spell a state the contract does not have.
+func TestOptionalStatesAreOnlyReachableThroughConstructors(t *testing.T) {
+	source := generated(t,
+		[]*resources.RunnableField{{Name: "flag", Type: resources.RunnableFieldBoolean, Optional: true, Nullable: true}},
+		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
+	)
+	for _, exported := range []string{"Present bool", "Value *T"} {
+		if strings.Contains(source, exported) {
+			t.Fatalf("Optional exports %q, so a literal can set a value without marking it present:\n%s", exported, source)
+		}
+	}
+	for _, constructor := range []string{"func Absent[T any]() Optional[T]", "func Null[T any]() Optional[T]", "func Set[T any](value T) Optional[T]"} {
+		if !strings.Contains(source, constructor) {
+			t.Fatalf("Optional has no %q:\n%s", constructor, source)
+		}
+	}
+}
+
+// An array is a List, and an optional one is carried by Present rather than by
+// a pointer: both refuse the null this field does not declare, where a pointer
+// would have decoded it as the absent key it is not.
+func TestOptionalArrayIsCarriedAndNeverAPointer(t *testing.T) {
+	source := generated(t,
+		[]*resources.RunnableField{
+			{Name: "tags", Type: resources.RunnableFieldArray, Optional: true, Items: field("", resources.RunnableFieldString)},
+			{Name: "marks", Type: resources.RunnableFieldArray, Optional: true, Nullable: true, Items: field("", resources.RunnableFieldString)},
+		},
+		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
+	)
+	requireLine(t, source, "Tags Present[List[string]] `json:\"tags,omitzero\"`")
+	requireLine(t, source, "Marks Optional[List[string]] `json:\"marks,omitzero\"`")
+}
+
+// The rule that turns a contract name into a generated type name is shared
+// with the other runnable agents: an author reading the Go and the Python
+// bindings of one contract must see the same names. It is duplicated in
+// runnable-python pkg/generate/types.go (camel and nestedName) until it moves
+// into core, so it is pinned here against the names that implementation emits.
+func TestNamingIsTheSharedCrossLanguageRule(t *testing.T) {
+	source := generated(t,
+		[]*resources.RunnableField{
+			{Name: "stop_words", Type: resources.RunnableFieldObject, Fields: []*resources.RunnableField{
+				{Name: "by_language", Type: resources.RunnableFieldObject, Fields: []*resources.RunnableField{field("id", resources.RunnableFieldString)}},
+			}},
+			{Name: "records", Type: resources.RunnableFieldArray, Items: &resources.RunnableField{
+				Type: resources.RunnableFieldObject, Fields: []*resources.RunnableField{
+					{Name: "sub_records", Type: resources.RunnableFieldArray, Items: &resources.RunnableField{
+						Type: resources.RunnableFieldObject, Fields: []*resources.RunnableField{field("id", resources.RunnableFieldString)},
+					}},
+				},
+			}},
+		},
+		[]*resources.RunnableField{field("total", resources.RunnableFieldInteger)},
+	)
+	for _, name := range []string{
+		"type InputStopWords struct {",
+		"type InputStopWordsByLanguage struct {",
+		"type InputRecordsItem struct {",
+		"type InputRecordsItemSubRecordsItem struct {",
+	} {
+		requireLine(t, source, name)
+	}
+}
+
+// Generated code is read as a diff by the author who owns the workspace it
+// lands in, so the whole file is pinned: declaration order, the header, the
+// blank lines and the single emission of each carrier.
+func TestGeneratedFileMatchesItsGolden(t *testing.T) {
+	source, err := generate.Bindings("wordcount", coveringContract())
+	if err != nil {
+		t.Fatalf("Bindings: %v", err)
+	}
+	golden := filepath.Join("testdata", "covering_bindings.golden")
+	if os.Getenv("UPDATE_GOLDEN") != "" {
+		if err := os.WriteFile(golden, source, 0o600); err != nil {
+			t.Fatalf("writing %s: %v", golden, err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("reading %s: %v", golden, err)
+	}
+	if string(source) != string(want) {
+		t.Fatalf("generated bindings differ from %s; re-run with UPDATE_GOLDEN=1 to accept\n--- got ---\n%s", golden, source)
+	}
+}
+
+// The scaffold is the author's from its first write, so a second generation
+// leaves an implementation exactly as it found it.
+func TestWriteHandlerNeverOverwritesAnImplementation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "handler.go")
+
+	written, err := generate.WriteHandler(path, "wordcount", "word-count")
+	if err != nil {
+		t.Fatalf("WriteHandler: %v", err)
+	}
+	if !written {
+		t.Fatal("the first WriteHandler wrote nothing")
+	}
+
+	implementation := []byte("package wordcount\n\n// the author's work\n")
+	if err := os.WriteFile(path, implementation, 0o600); err != nil {
+		t.Fatalf("writing the implementation: %v", err)
+	}
+
+	written, err = generate.WriteHandler(path, "wordcount", "word-count")
+	if err != nil {
+		t.Fatalf("second WriteHandler: %v", err)
+	}
+	if written {
+		t.Fatal("WriteHandler reported writing over an existing handler")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	if string(got) != string(implementation) {
+		t.Fatalf("the author's handler was rewritten:\n%s", got)
 	}
 }
