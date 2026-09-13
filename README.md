@@ -2,9 +2,11 @@
 
 The Codefly language agent for typed, finite Go operations: generate a handler and harness, compile portable native artifacts, and emit container build recipes.
 
-**Status: the contract-determined generation slice is implemented. No agent executable or release is available yet.** [Issue #2](https://github.com/codefly-dev/runnable-go/issues/2) tracks the remaining execution lifecycle: the agent process, the invocation harness, build evidence and native/k3d qualification.
+**Status: the contract-determined generation slice and the agent process are implemented. No release is published yet.** The `runnable-go` executable serves the agent lifecycle over gRPC and advertises no lifecycle capability, because the Builder handoff a Runnable needs is still undefined. [Issue #2](https://github.com/codefly-dev/runnable-go/issues/2) tracks the remaining execution lifecycle: the invocation harness, build evidence and native/k3d qualification.
 
 `pkg/generate` turns a runnable's declared contract into the typed Go bindings and the author handler scaffold. The bounded profile maps to `string`, `int64`, `bool`, generated structs and `List`, and the contract's independent `optional` (the key may be absent) and `nullable` (the value may be null) declarations map to four distinct Go spellings, one per combination, so neither state can stand for the other. Generated files carry a `//go:build go1.24` constraint: absence is kept by the `encoding/json` `omitzero` option, which an older toolchain ignores in silence rather than rejecting.
+
+`cmd/runnable-go` is the agent process. It serves the agent lifecycle over gRPC through `agents.Serve`: identity, capabilities and plugin commands, behind core's auth, health and handshake. It registers no Builder and advertises no capability, so the CLI refuses a Builder phase with a clear error instead of dialing a service that cannot answer.
 
 Bindings do not replace payload validation. The generated types carry the value types, the null states and the array states and nothing more, so the harness must still enforce required fields and reject unknown keys against the raw payload before decoding input or accepting output.
 
