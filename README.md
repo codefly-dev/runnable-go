@@ -2,11 +2,15 @@
 
 The Codefly language agent for typed, finite Go operations: generate a handler and harness, compile portable native artifacts, and emit container build recipes.
 
-**Status: the contract-determined generation slice is implemented; the agent process, harness and qualification are deferred until the Python/native/k3d contract is qualified.** No agent executable or release is available yet. [Implementation issue #1](https://github.com/codefly-dev/runnable-go/issues/1) tracks this work.
+**Status: the contract-determined generation slice is implemented; the agent process, harness and qualification are deferred until the Python/native/k3d contract is qualified.** No agent executable or release is available yet. [Implementation issue #1](https://github.com/codefly-dev/runnable-go/issues/1) records the original scope; [issue #2](https://github.com/codefly-dev/runnable-go/issues/2) tracks the remaining execution lifecycle.
 
 `pkg/generate` turns a runnable's declared contract into the typed Go bindings and the author handler scaffold. The bounded profile maps to `string`, `int64`, `bool`, generated structs and slices, and the contract's independent `optional` (the key may be absent) and `nullable` (the value may be null) declarations map to three distinct Go spellings so neither state can stand for the other.
 
 The agent gRPC process, the invocation harness, build evidence and native/k3d qualification wait on [core #472](https://github.com/codefly-dev/core/issues/472), which freezes the agent/CLI handoff `runnable.codefly.yaml` names but does not define: carrying a `RunnableIdentity` through `Builder.Load`, returning native launch and build evidence from `Builder.Package`, and the `codefly.runnable/v1` framing a harness must agree with byte for byte.
+
+Python now has a harness and packaging implementation in [runnable-python #2](https://github.com/codefly-dev/runnable-python/pull/2). Its framing remains a proposal for core #472. Go must consume the shared contract after it is ratified and qualified through the real Codefly/Orchestration path.
+
+Bindings do not replace payload validation: the future harness must enforce required fields, unknown-key rejection, and non-null arrays before decoding input or accepting output. See [the review milestone](docs/milestone_1_bindings_review.md).
 
 ## What belongs here
 
