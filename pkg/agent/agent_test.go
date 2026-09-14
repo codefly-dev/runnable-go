@@ -6,14 +6,26 @@ import (
 	"testing"
 
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/runnable-go/pkg/agent"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
+// manifest is the agent's own identity, which a runnable declaration pins and
+// Builder.Load compares a declaration against.
+func manifest() *resources.Agent {
+	return &resources.Agent{
+		Kind:      resources.RunnableAgent,
+		Name:      "go",
+		Publisher: "codefly.dev",
+		Version:   "0.0.1",
+	}
+}
+
 func information(t *testing.T) *agentv0.AgentInformation {
 	t.Helper()
-	info, err := agent.New().GetAgentInformation(context.Background(), &agentv0.AgentInformationRequest{})
+	info, err := agent.New(manifest()).GetAgentInformation(context.Background(), &agentv0.AgentInformationRequest{})
 	if err != nil {
 		t.Fatalf("GetAgentInformation: %v", err)
 	}
@@ -27,7 +39,7 @@ func information(t *testing.T) *agentv0.AgentInformation {
 // not advertise makes the server unreachable. Both directions are checked here
 // so the two halves cannot drift apart as capabilities are added.
 func TestAdvertisedCapabilitiesMatchRegisteredServers(t *testing.T) {
-	registration := agent.Registration()
+	registration := agent.Registration(manifest())
 	if registration.Agent == nil {
 		t.Fatal("registration serves no Agent: the CLI cannot ask the process what it supports")
 	}
@@ -72,36 +84,51 @@ func TestAdvertisedCapabilitiesMatchRegisteredServers(t *testing.T) {
 	}
 }
 
-// The Builder handoff is what issue #2 is blocked on: Builder.LoadRequest
-// carries a ServiceIdentity and no RunnableIdentity, and Builder.CreateRequest
-// carries nothing at all, so a Builder registered now could not know which
-// runnable it was loaded for. Until core freezes that, the honest answer is to
-// advertise nothing. This test is expected to change when the handoff lands.
-func TestNoCapabilityIsAdvertisedWhileTheBuilderHandoffIsUndefined(t *testing.T) {
-	if got := information(t).GetCapabilities(); len(got) != 0 {
-		t.Fatalf("capabilities = %v, want none until a lifecycle server is registered", got)
+// A Runnable's invocation process is supervised by its caller, so this agent
+// serves no Runtime. The advertisement helper pairs BUILDER with RUNTIME by
+// default, which is why BUILDER is advertised through CapabilityOnly and
+// appended on its own; this pins that the pairing did not come back.
+func TestAgentAdvertisesBuilderWithoutRuntime(t *testing.T) {
+	var builder, runtime bool
+	for _, capability := range information(t).GetCapabilities() {
+		switch capability.GetType() {
+		case agentv0.Capability_BUILDER:
+			builder = true
+		case agentv0.Capability_RUNTIME, agentv0.Capability_HOT_RELOAD:
+			runtime = true
+		}
+	}
+	if !builder {
+		t.Error("BUILDER is not advertised, so the CLI refuses every Builder phase")
+	}
+	if runtime {
+		t.Error("a Runtime capability is advertised, but this agent serves no Runtime")
 	}
 }
 
 func TestAgentAdvertisesGo(t *testing.T) {
-	languages := information(t).GetLanguages()
-	if len(languages) != 1 {
-		t.Fatalf("languages = %v, want exactly Go", languages)
+	info := information(t)
+	languages := info.GetLanguages()
+	if len(languages) != 1 || languages[0].GetType() != agentv0.Language_GO {
+		t.Fatalf("languages = %v, want exactly GO", languages)
 	}
-	if got := languages[0].GetType(); got != agentv0.Language_GO {
-		t.Fatalf("language = %v, want GO", got)
+	toolchains := info.GetToolchains()
+	if len(toolchains) != 1 || toolchains[0].GetType() != agentv0.Toolchain_GO {
+		t.Fatalf("toolchains = %v, want exactly GO", toolchains)
 	}
 }
 
 // read_me is what a human or model reads to decide what it may ask of the
-// process, so it has to state the current surface rather than an aspiration.
-func TestAgentDocumentsItsCurrentSurface(t *testing.T) {
+// process, so it has to name the phases that will refuse.
+func TestAgentDocumentsItsUnsupportedPhases(t *testing.T) {
 	readMe := information(t).GetReadMe()
 	if strings.TrimSpace(readMe) == "" {
 		t.Fatal("read_me is empty: a caller has nothing to read about the agent")
 	}
-	if !strings.Contains(readMe, "Supported capabilities: none") {
-		t.Errorf("read_me does not state the unsupported state:\n%s", readMe)
+	for _, phase := range []string{"RunnableBuildInputs", "Package", "UNSUPPORTED"} {
+		if !strings.Contains(readMe, phase) {
+			t.Errorf("read_me does not mention %q:\n%s", phase, readMe)
+		}
 	}
 }
 
@@ -121,12 +148,11 @@ func TestAgentInformationIsNotSharedBetweenCalls(t *testing.T) {
 	}
 }
 
-// ListCommands and RunPluginCommand read one list, so a command can never be
-// listed without being runnable or runnable without being listed. With no
-// commands this reduces to refusing everything, and it keeps holding when
-// commands are added.
+// ListCommands and RunPluginCommand must agree: a command can never be listed
+// without being runnable. With no commands this reduces to refusing everything,
+// and it keeps holding when commands are added.
 func TestEveryListedCommandRuns(t *testing.T) {
-	server := agent.New()
+	server := agent.New(manifest())
 	listed, err := server.ListCommands(context.Background(), &agentv0.ListCommandsRequest{})
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
@@ -140,7 +166,7 @@ func TestEveryListedCommandRuns(t *testing.T) {
 }
 
 func TestUnlistedCommandIsRefused(t *testing.T) {
-	_, err := agent.New().RunPluginCommand(context.Background(), &agentv0.RunPluginCommandRequest{Command: "package"})
+	_, err := agent.New(manifest()).RunPluginCommand(context.Background(), &agentv0.RunPluginCommandRequest{Command: "package"})
 	if got := status.Code(err); got != codes.NotFound {
 		t.Fatalf("RunPluginCommand code = %v, want NotFound", got)
 	}
@@ -154,7 +180,7 @@ func TestEffectiveInputsIsRefusedWhileNoVersionIsAdvertised(t *testing.T) {
 	if versions := information(t).GetEffectiveInputsVersions(); len(versions) != 0 {
 		t.Skipf("agent now advertises effective input versions %v; implement the RPC", versions)
 	}
-	_, err := agent.New().GetEffectiveInputs(context.Background(), &agentv0.GetEffectiveInputsRequest{})
+	_, err := agent.New(manifest()).GetEffectiveInputs(context.Background(), &agentv0.GetEffectiveInputsRequest{})
 	if got := status.Code(err); got != codes.Unimplemented {
 		t.Fatalf("GetEffectiveInputs code = %v, want Unimplemented", got)
 	}

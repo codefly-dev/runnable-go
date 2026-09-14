@@ -15,6 +15,7 @@ import (
 	"github.com/codefly-dev/core/agents"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -139,33 +140,61 @@ func TestAgentProcessServesItsInformation(t *testing.T) {
 	if len(languages) != 1 || languages[0].GetType() != agentv0.Language_GO {
 		t.Fatalf("languages = %v, want exactly GO", languages)
 	}
-	if got := info.GetCapabilities(); len(got) != 0 {
-		t.Fatalf("capabilities = %v, want none", got)
+	var builder, runtime bool
+	for _, capability := range info.GetCapabilities() {
+		switch capability.GetType() {
+		case agentv0.Capability_BUILDER:
+			builder = true
+		case agentv0.Capability_RUNTIME, agentv0.Capability_HOT_RELOAD:
+			runtime = true
+		}
+	}
+	if !builder {
+		t.Errorf("capabilities = %v, want BUILDER", info.GetCapabilities())
+	}
+	if runtime {
+		t.Errorf("capabilities = %v, want no Runtime: the invocation process is supervised by the caller", info.GetCapabilities())
 	}
 }
 
-// The capability set is a promise about which services are dialable. A Builder
-// that is neither advertised nor registered must be absent from the wire, not
-// merely absent from the advertisement: this is the end-to-end half of
-// TestAdvertisedCapabilitiesMatchRegisteredServers.
+// The advertised BUILDER must be reachable, not merely advertised: the CLI
+// gates the phase on the capability and then dials.
 //
-// The status code alone cannot show that. gRPC answers Unimplemented both for a
-// service it has never heard of and for a registered service whose method falls
-// through to the embedded UnimplementedBuilderServer, so a code-only assertion
-// would pass just as well with a Builder wired in. The message is the only place
-// the two differ on the wire: an unregistered service reports "unknown service",
-// a registered one reports "method Load not implemented".
-func TestUnservedBuilderIsAbsentFromTheWire(t *testing.T) {
+// An empty request is the probe, because the answer distinguishes the two
+// things a status code alone cannot. gRPC answers Unimplemented both for a
+// service it has never heard of and for one falling through to its embedded
+// UnimplementedBuilderServer; only a handler that actually ran can reject the
+// request on its contents, which is what InvalidArgument here proves.
+func TestAdvertisedBuilderIsReachableOnTheWire(t *testing.T) {
 	conn, _, _ := served(t)
 	ctx, cancel := authorized(t)
 	defer cancel()
 
 	_, err := builderv0.NewBuilderClient(conn).Load(ctx, &builderv0.LoadRequest{})
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("Builder.Load code = %v, want InvalidArgument from the registered handler", got)
+	}
+	if message := status.Convert(err).Message(); !strings.Contains(message, "Runnable location is required") {
+		t.Fatalf("Builder.Load said %q; want the loaded handler's own refusal", message)
+	}
+}
+
+// The mirror invariant: a service that is neither advertised nor registered
+// must be absent from the wire. This agent serves no Runtime, because a
+// Runnable's invocation process is supervised by its caller.
+//
+// The message, not the code, is what shows absence — see above.
+func TestUnservedRuntimeIsAbsentFromTheWire(t *testing.T) {
+	conn, _, _ := served(t)
+	ctx, cancel := authorized(t)
+	defer cancel()
+
+	_, err := runtimev0.NewRuntimeClient(conn).Load(ctx, &runtimev0.LoadRequest{})
 	if got := status.Code(err); got != codes.Unimplemented {
-		t.Fatalf("Builder.Load code = %v, want Unimplemented for an unregistered service", got)
+		t.Fatalf("Runtime.Load code = %v, want Unimplemented for an unregistered service", got)
 	}
 	if message := status.Convert(err).Message(); !strings.Contains(message, "unknown service") {
-		t.Fatalf("Builder.Load said %q; want an unknown-service refusal, which means a Builder is registered on the wire without being advertised", message)
+		t.Fatalf("Runtime.Load said %q; want an unknown-service refusal, which means a Runtime is registered without being advertised", message)
 	}
 }
 
