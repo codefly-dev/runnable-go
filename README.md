@@ -2,9 +2,13 @@
 
 The Codefly language agent for typed, finite Go operations: generate a handler and harness, compile portable native artifacts, and emit container build recipes.
 
-**Status: the contract-determined generation slice is implemented. No agent executable or release is available yet.** [Issue #2](https://github.com/codefly-dev/runnable-go/issues/2) tracks the remaining execution lifecycle: the agent process, the invocation harness, build evidence and native/k3d qualification.
+**Status: the agent process, the Builder load path and typed generation are implemented. No release is published yet.** The `runnable-go` executable serves the agent lifecycle over gRPC and advertises `BUILDER`, so a runnable can be loaded, scaffolded and generated through the real agent. It advertises no Runtime: a Runnable's invocation process is supervised by its caller. [Issue #2](https://github.com/codefly-dev/runnable-go/issues/2) tracks the rest of the execution lifecycle: the invocation harness, build evidence and native/k3d qualification.
 
 `pkg/generate` turns a runnable's declared contract into the typed Go bindings and the author handler scaffold. The bounded profile maps to `string`, `int64`, `bool`, generated structs and `List`, and the contract's independent `optional` (the key may be absent) and `nullable` (the value may be null) declarations map to four distinct Go spellings, one per combination, so neither state can stand for the other. Generated files carry a `//go:build go1.24` constraint: absence is kept by the `encoding/json` `omitzero` option, which an older toolchain ignores in silence rather than rejecting.
+
+`main.go` is the agent process, at the repository root because the manifest it embeds is: `go:embed` cannot reach outside its own directory, and a second copy of the agent's identity could drift from the published one. It serves the agent lifecycle over gRPC through `agents.Serve` — identity, capabilities and plugin commands, behind core's auth, health and handshake — and registers the Builder it advertises.
+
+`pkg/agent` serves that Builder. `Load` resolves the `RunnableLocation` the CLI sends and re-derives both the release identity and the directory from the workspace declaration, so a request naming one release while pointing at another's directory is refused rather than generated into. `Create` scaffolds the author's handler and `go.mod` without overwriting either, then writes the generated bindings beside them. `RunnableBuildInputs` and `Package` report `UNSUPPORTED`, the contract's own word for a phase an agent does not implement: without the Go harness there is nothing to digest and nothing to launch, so build evidence and a launch command could only be guessed.
 
 Bindings do not replace payload validation. The generated types carry the value types, the null states and the array states and nothing more, so the harness must still enforce required fields and reject unknown keys against the raw payload before decoding input or accepting output.
 
@@ -23,9 +27,9 @@ The Go agent uses the same language-neutral handoff as Python. Adding it must no
 
 ## Shared baseline and delivery
 
-[Core PR #471](https://github.com/codefly-dev/core/pull/471) merged at `6a40c4bf28ac3dcebd534c32040349be96626605`. It introduces `runnable.codefly.yaml`, agent kind `codefly:runnable` (`Agent_RUNNABLE`), and the immutable `RunnablePackage` and `RunnableBinding` contracts. The agent name is `go`; distribution uses the `runnable-go` prefix.
+This repository builds against `codefly-dev/core v0.3.31`. [Core PR #471](https://github.com/codefly-dev/core/pull/471) introduced `runnable.codefly.yaml`, agent kind `codefly:runnable` (`Agent_RUNNABLE`) and the immutable `RunnablePackage` and `RunnableBinding` contracts; [#473](https://github.com/codefly-dev/core/pull/473) and [#474](https://github.com/codefly-dev/core/pull/474) then closed [core #472](https://github.com/codefly-dev/core/issues/472), carrying a `RunnableLocation` through `Builder.Load`, adding `Builder.RunnableBuildInputs`, returning the native launch command from `Builder.Package`, and freezing the `codefly.runnable/v1` invocation framing. The agent name is `go`; distribution uses the `runnable-go` prefix.
 
-First qualify the remaining agent/CLI interface and invocation framing in [runnable-python #1](https://github.com/codefly-dev/runnable-python/issues/1) and [CLI #638](https://github.com/codefly-dev/cli/issues/638). This repository then implements that proven contract and repeats the native and actual Kubernetes invocation path with a separate generated Go example.
+The agent/CLI interface and the invocation framing are now merged in core, and [runnable-python](https://github.com/codefly-dev/runnable-python) has qualified them with a working harness and native packaging. This repository implements that same proven contract — reusing its framing rather than defining a Go-specific one — and repeats the native and actual Kubernetes invocation path with a separate generated Go example.
 
 Qualification includes real typed I/O, cross-language schema compatibility, failure/interruption, immutable version selection, reconnect behavior and scoped cleanup. Direct binary execution or a manually submitted Kubernetes Job alone does not establish the durable execution path.
 
