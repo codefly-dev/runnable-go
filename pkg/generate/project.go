@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	"github.com/codefly-dev/core/resources"
 )
 
@@ -95,9 +96,19 @@ func Scaffold(runnable *resources.Runnable, dir string) error {
 	return os.WriteFile(module, moduleTemplate(pkg), 0o644)
 }
 
-// Generate writes the agent-owned files: the typed bindings. Regenerating an
-// unchanged declaration produces the same bytes.
+// Generate writes the agent-owned files: the typed bindings, the invocation
+// harness and the executable a launcher starts. Regenerating an unchanged
+// declaration produces the same bytes.
 func Generate(runnable *resources.Runnable, dir string) error {
+	return GenerateForRelease(runnable, dir, nil)
+}
+
+// GenerateForRelease binds the harness to the workspace-resolved release, which
+// it refuses an invocation naming anything else against. A nil identity is
+// standalone generation, which has no owning workspace: the harness then checks
+// the declaration's own name, module and version and leaves the workspace
+// unchecked, because there is none to check against.
+func GenerateForRelease(runnable *resources.Runnable, dir string, identity *basev0.RunnableIdentity) error {
 	pkg, err := PackageName(runnable.Name)
 	if err != nil {
 		return err
@@ -109,7 +120,27 @@ func Generate(runnable *resources.Runnable, dir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, BindingsFile), bindings, 0o644)
+	harness, err := Harness(pkg, runnable, identity)
+	if err != nil {
+		return err
+	}
+	command, err := Command(pkg)
+	if err != nil {
+		return err
+	}
+	// Nothing is written until every file renders, so a declaration one of them
+	// rejects does not leave a half-generated package behind.
+	if err := os.WriteFile(filepath.Join(dir, BindingsFile), bindings, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, HarnessFile), harness, 0o644); err != nil {
+		return err
+	}
+	directory := filepath.Join(dir, CommandDirectory)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(directory, CommandFile), command, 0o644)
 }
 
 // moduleTemplate declares the runnable's module at the toolchain the generated

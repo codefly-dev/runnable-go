@@ -97,11 +97,13 @@ func (b *Builder) Load(ctx context.Context, request *builderv0.LoadRequest) (*bu
 	return &builderv0.LoadResponse{State: &builderv0.LoadStatus{State: builderv0.LoadStatus_READY}}, nil
 }
 
-// Create scaffolds the author's files and generates the typed bindings.
+// Create scaffolds the author's files and generates the typed bindings and the
+// invocation harness.
 //
 // The handler and the module declaration are written only when absent, so
 // creating twice cannot replace an implementation with a scaffold that returns
-// "handler is not implemented". The bindings are agent-owned and rewritten.
+// "handler is not implemented". The bindings and the harness are agent-owned
+// and rewritten, bound to the release Load resolved.
 func (b *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*builderv0.CreateResponse, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -127,7 +129,7 @@ func (b *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 			return nil, status.Errorf(codes.Internal, "save the declaration: %v", err)
 		}
 	}
-	if err := generate.Generate(runnable, runnable.Dir()); err != nil {
+	if err := generate.GenerateForRelease(runnable, runnable.Dir(), b.identity); err != nil {
 		return nil, status.Errorf(codes.Internal, "generate the bindings: %v", err)
 	}
 	return &builderv0.CreateResponse{State: &builderv0.CreateStatus{State: builderv0.CreateStatus_CREATED}}, nil
@@ -137,9 +139,10 @@ func (b *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 //
 // UNSUPPORTED is the contract's own word for a phase an agent does not
 // implement, and it is returned in band rather than as a gRPC Unimplemented so
-// a caller reads one refusal shape from the whole Builder. The Go harness the
-// digest would measure does not exist yet; reporting a RunnableBuild without
-// one would pin evidence for a package that cannot be run.
+// a caller reads one refusal shape from the whole Builder. The harness the
+// digest would measure is generated now, but a RunnableBuild also pins the
+// toolchain and the harness as they were archived, and this agent prepares no
+// tree to measure that from.
 func (b *Builder) RunnableBuildInputs(_ context.Context, _ *builderv0.RunnableBuildInputsRequest) (*builderv0.RunnableBuildInputsResponse, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -149,21 +152,21 @@ func (b *Builder) RunnableBuildInputs(_ context.Context, _ *builderv0.RunnableBu
 	return &builderv0.RunnableBuildInputsResponse{
 		State: &builderv0.RunnableBuildInputsStatus{
 			State:   builderv0.RunnableBuildInputsStatus_UNSUPPORTED,
-			Message: "the Go invocation harness is not implemented, so this agent cannot report build inputs yet",
+			Message: "native Go packaging is not implemented, so there is no prepared tree to measure build inputs from",
 		},
 	}, nil
 }
 
 // Package emits the native artifact. Unsupported for the same reason as
-// RunnableBuildInputs: without a harness there is nothing to launch, and
-// PackageArtifact.command could only be guessed.
+// RunnableBuildInputs: this agent generates the harness but does not compile or
+// archive it, so there is no artifact to name and no digest to report.
 func (b *Builder) Package(_ context.Context, _ *builderv0.PackageRequest) (*builderv0.PackageResponse, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return &builderv0.PackageResponse{
 		State: &builderv0.PackageStatus{
 			State:   builderv0.PackageStatus_UNSUPPORTED,
-			Message: "native Go packaging is not implemented; the harness it would launch does not exist yet",
+			Message: "native Go packaging is not implemented: the generated harness is neither compiled nor archived yet",
 		},
 	}, nil
 }

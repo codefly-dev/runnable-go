@@ -27,13 +27,15 @@ import (
 
 // readMe is what a human or model reads to decide what it may ask of this
 // process, so it states the current surface rather than the roadmap.
-const readMe = `Codefly Runnable agent for Go: typed handler scaffolding and typed ` +
-	`bindings for the bounded contract profile, generated into the runnable's own ` +
-	`Go module, through Builder gRPC.
+const readMe = `Codefly Runnable agent for Go: typed handler scaffolding, typed ` +
+	`bindings for the bounded contract profile and the ` + resources.RunnableProtocolV1 +
+	` invocation harness, generated into the runnable's own Go module, through ` +
+	`Builder gRPC.
 
-The ` + resources.RunnableProtocolV1 + ` harness, native packaging and build ` +
-	`evidence are not implemented: Builder.RunnableBuildInputs and Builder.Package ` +
-	`report UNSUPPORTED. Generated files require ` + generate.GoRequirement + `.`
+Native packaging and build evidence are not implemented: Builder.RunnableBuildInputs ` +
+	`and Builder.Package report UNSUPPORTED, so the generated harness is compiled and ` +
+	`launched by its caller rather than archived by this agent. Generated files ` +
+	`require ` + generate.GoRequirement + `.`
 
 // Server implements the Agent service.
 //
