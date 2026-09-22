@@ -2,6 +2,9 @@ publisher: codefly.dev
 kind: codefly:runnable
 name: go
 version: 0.0.3
+source:
+  directory: .
+  agent: codefly.dev/go:0.0.56
 release:
   owner: cli
 conformance:
