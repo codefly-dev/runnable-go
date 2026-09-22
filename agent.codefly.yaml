@@ -2,3 +2,8 @@ publisher: codefly.dev
 kind: codefly:runnable
 name: go
 version: 0.0.1
+release:
+  owner: cli
+conformance:
+  mode: runnable-create
+  handler: handler.go
