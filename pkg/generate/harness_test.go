@@ -24,42 +24,63 @@ func harnessSource(t *testing.T, runnable *resources.Runnable, identity *basev0.
 	return string(source)
 }
 
-// The framing is one contract across the agents that implement it, and it is
-// core's. A Go harness that spelled an environment variable or an exit code
-// differently from the Python one would need a launcher of its own, which is
-// the thing the shared protocol exists to prevent.
+// The seam is one contract across the agents that implement it, and it is
+// core's. A Go harness that spelled a header, a route or the listen-address
+// variable differently from the Python one would need a caller of its own,
+// which is the thing the shared protocol exists to prevent — and it would fail
+// as an unreachable owner rather than as a visible mistake in a string.
 //
 // The values are read from core here rather than repeated, so a rename in core
 // fails this test instead of silently splitting the two harnesses apart.
-func TestTheFramingIsOneContract(t *testing.T) {
-	source := harnessSource(t, declaration(t, resources.RunnableCancellationNone, resources.RunnableRecoveryRecompute), release())
+func TestTheServedSeamIsOneContract(t *testing.T) {
+	source := harnessSource(t, declaration(t, resources.RunnableCancellationNone, resources.RunnableRecoveryReceipt), release())
 
 	for _, value := range []string{
-		corerunnable.EnvProtocol,
-		corerunnable.EnvInvocationPath,
-		corerunnable.EnvResultPath,
-		resources.RunnableProtocolV1,
+		corerunnable.ListenAddressEnv,
+		corerunnable.ServedInvokeProcedure,
+		corerunnable.ServedLookupProcedure,
+		corerunnable.WorkContextHeader,
+		corerunnable.EffectHeader,
+		corerunnable.DeadlineHeader,
+		corerunnable.FailureCodeHeader,
+		resources.RunnableServedProtocolV1,
 	} {
 		if !strings.Contains(source, fmt.Sprintf("%q", value)) {
-			t.Errorf("the harness does not carry %q, so it reads a framing no core launcher writes", value)
+			t.Errorf("the harness does not carry %q, so it serves a seam no caller dials", value)
 		}
 	}
 
-	// The exit codes the Python harness reports for the same conditions. They
-	// are diagnostics rather than outcomes, which is exactly why they have to
-	// agree: an operator reading 64 must learn the same thing from either.
-	for name, code := range map[string]int{
-		"harnessExitCompleted":     0,
-		"harnessExitInvalidInput":  64,
-		"harnessExitInvalidOutput": 65,
-		"harnessExitFailed":        66,
-		"harnessExitTimeout":       67,
-		"harnessExitInterrupted":   68,
-		"harnessExitProtocol":      69,
+	// The framing this replaced. A harness still reading two document paths out
+	// of the environment would start, serve nothing, and look healthy.
+	for _, gone := range []string{
+		"CODEFLY__RUNNABLE_PROTOCOL",
+		"CODEFLY__RUNNABLE_INVOCATION",
+		"CODEFLY__RUNNABLE_RESULT",
 	} {
-		if !declares(source, name, fmt.Sprint(code)) {
-			t.Errorf("the harness does not declare %s = %d", name, code)
+		if strings.Contains(source, gone) {
+			t.Errorf("the harness still carries %s, which no caller writes", gone)
 		}
+	}
+}
+
+// The failure-code header is the only thing that proves to a caller that no
+// effect committed, so exactly one place in the harness may set it: the
+// handler's own declared Failure. A harness that set it anywhere else would
+// assert on the handler's behalf that its effect did not happen.
+func TestOnlyADeclaredFailureSetsTheProvenHeader(t *testing.T) {
+	source := harnessSource(t, declaration(t, resources.RunnableCancellationNone, resources.RunnableRecoveryReceipt), release())
+
+	sets := 0
+	for _, line := range strings.Split(source, "\n") {
+		if strings.Contains(line, "Set(harnessFailureCodeHeader") {
+			sets++
+		}
+	}
+	if sets != 1 {
+		t.Errorf("the harness sets the failure-code header in %d places; exactly one — the handler's own Failure — may", sets)
+	}
+	if !strings.Contains(source, "func harnessProvenFailure(w http.ResponseWriter, failure *Failure)") {
+		t.Error("the one place that sets it is no longer the declared-failure path")
 	}
 }
 

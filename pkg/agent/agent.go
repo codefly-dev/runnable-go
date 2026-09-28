@@ -28,7 +28,7 @@ import (
 // readMe is what a human or model reads to decide what it may ask of this
 // process, so it states the current surface rather than the roadmap.
 const readMe = `Codefly Runnable agent for Go: typed handler scaffolding, typed ` +
-	`bindings for the bounded contract profile and the ` + resources.RunnableProtocolV1 +
+	`bindings for the bounded contract profile and the ` + resources.RunnableServedProtocolV1 +
 	` invocation harness, generated into the runnable's own Go module, through ` +
 	`Builder gRPC.
 
