@@ -16,7 +16,7 @@ func field(name string, t resources.RunnableFieldType) *resources.RunnableField 
 
 func contractOf(input, output []*resources.RunnableField) *resources.RunnableContract {
 	return &resources.RunnableContract{
-		Protocol: resources.RunnableProtocolV1,
+		Protocol: resources.RunnableServedProtocolV1,
 		Input:    &resources.RunnableSchema{Fields: input},
 		Output:   &resources.RunnableSchema{Fields: output},
 	}
